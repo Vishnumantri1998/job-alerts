@@ -1,1 +1,33 @@
+name: Daily Job Alerts (C#)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # runs daily at 06:00 UTC (~11:30 AM IST)
+  workflow_dispatch:
+
+jobs:
+  send-job-alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '7.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Run job alerts
+        env:
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          DAYS_LOOKBACK: 2
+        run: dotnet run --configuration Release --no-build
 
