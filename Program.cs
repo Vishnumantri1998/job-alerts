@@ -14,23 +14,33 @@ using SendGrid.Helpers.Mail;
 
 class Program
 {
-    // Feeds to check (add/remove as desired)
+    // =================== Configurable: feeds, keywords, lookback ===================
     static readonly string[] RSS_FEEDS = new[]
     {
-        // Many sites block CI runners (e.g., Indeed) — fallback to HTML is attempted below
-        "https://www.indeed.co.in/rss?q=Full+Stack+.NET+Developer+Angular+Azure&l=India",
-        "https://www.indeed.com/rss?q=Full+Stack+.NET+Developer+Angular+Azure&l=Remote",
+        // Known remote/job board feeds (likely accessible from CI)
         "https://weworkremotely.com/categories/remote-programming-jobs.rss",
-        "https://remoteok.com/remote-dev-jobs.rss"
+        "https://remoteok.com/remote-dev-jobs.rss",
+
+        // CareerJet (India) aggregated feed — often accessible
+        "https://www.careerjet.co.in/rss.php?l=India&keywords=Full+Stack+.NET+Developer+Angular+Azure",
+
+        // SimplyHired (India) - search RSS param (may vary by region)
+        "https://www.simplyhired.co.in/search?q=Full+Stack+.NET+Developer+Angular+Azure&fdb=1&pn=1&tm=14&l=India&rss=true"
+
+        // Add company/ATS feeds for specific employers (Lever, Greenhouse, Workable, etc.)
+        // e.g. "https://jobs.lever.co/microsoft?mode=rss"
+        // e.g. "https://boards.greenhouse.io/embed/job_board?for=companyname&view_type=external"
     };
 
     static readonly string[] KEYWORDS = new[]
     {
-        "full stack", ".net", "dotnet", "c#", ".net core", "asp.net", "angular", "azure", "web api", "microservices", "mvc", "entity framework", "sql", "backend", "developer"
+        "full stack", ".net", "dotnet", "c#", ".net core", "asp.net", "angular", "azure",
+        "web api", "microservices", "mvc", "entity framework", "sql", "backend", "developer", "engineer", "software"
     };
 
-    // While testing, keep a bigger window
-    const int DEFAULT_DAYS_LOOKBACK = 7;
+    // Increase lookback while testing so older posts are included (switch back to 2 when stable)
+    const int DEFAULT_DAYS_LOOKBACK = 14;
+    // =============================================================================
 
     static async Task<int> Main(string[] args)
     {
@@ -53,8 +63,6 @@ class Program
             var cutoff = DateTime.UtcNow.AddDays(-daysLookback);
             var matched = new List<(string title, string link, string summary)>();
             var seenLinks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // Keep feed statuses for the email summary (URL -> status message)
             var feedStatuses = new List<(string url, string status, int itemsFound)>();
 
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -110,16 +118,13 @@ class Program
                     }
                     else
                     {
-                        // RSS loaded but no items — treat as empty, try HTML fallback
                         Console.WriteLine($"RSS loaded but no items: {feedUrl}");
                         feedStatuses.Add((feedUrl, "RSS empty (will attempt HTML fallback)", 0));
                     }
                 }
                 catch (HttpRequestException hre)
                 {
-                    // network errors, 403, 401 etc show up here usually with inner message
                     Console.Error.WriteLine($"RSS attempt failed for {feedUrl}: {hre.Message}");
-                    // add a temporary status; we'll attempt HTML fallback below
                     feedStatuses.Add((feedUrl, $"RSS failed: {ParseShortHttpError(hre.Message)} (attempting HTML fallback)", 0));
                 }
                 catch (Exception ex)
@@ -128,7 +133,7 @@ class Program
                     feedStatuses.Add((feedUrl, $"RSS failed: {ex.Message} (attempting HTML fallback)", 0));
                 }
 
-                // If no RSS items or RSS failed, try HTML fallback
+                // HTML fallback if RSS empty or failed
                 if (!gotRssItems)
                 {
                     try
@@ -152,7 +157,6 @@ class Program
                                 var combined = (text + " " + href).ToLowerInvariant();
                                 if (!KEYWORDS.Any(k => combined.Contains(k))) continue;
 
-                                // Normalize relative URLs
                                 if (!Uri.IsWellFormedUriString(href, UriKind.Absolute))
                                 {
                                     if (Uri.TryCreate(feedUrl, UriKind.Absolute, out var baseUri) && Uri.TryCreate(baseUri, href, out var abs))
@@ -175,7 +179,6 @@ class Program
                             catch (Exception inner) { Console.Error.WriteLine($"Anchor parse skip: {inner.Message}"); }
                         }
 
-                        // update or append feed status (replace last entry for this URL if existed)
                         var idx = feedStatuses.FindIndex(f => f.url == feedUrl);
                         if (idx >= 0) feedStatuses[idx] = (feedUrl, $"HTML fallback checked", fallbackMatches);
                         else feedStatuses.Add((feedUrl, "HTML fallback checked", fallbackMatches));
@@ -183,7 +186,6 @@ class Program
                     catch (HttpRequestException hre)
                     {
                         Console.Error.WriteLine($"HTML fallback failed for {feedUrl}: {hre.Message}");
-                        // mark blocked/forbidden in status
                         var idx = feedStatuses.FindIndex(f => f.url == feedUrl);
                         if (idx >= 0) feedStatuses[idx] = (feedUrl, $"Blocked / HTTP error: {ParseShortHttpError(hre.Message)}", 0);
                         else feedStatuses.Add((feedUrl, $"Blocked / HTTP error: {ParseShortHttpError(hre.Message)}", 0));
@@ -200,7 +202,6 @@ class Program
 
             Console.WriteLine($"Total matched items: {matched.Count}");
 
-            // Compose subject and bodies
             var subject = matched.Count == 0
                 ? $"[Jobs Alert] No matches — {DateTime.UtcNow:yyyy-MM-dd}"
                 : $"[Jobs Alert] {matched.Count} matches for Full Stack .NET (Angular/Azure) - {DateTime.UtcNow:yyyy-MM-dd}";
@@ -208,11 +209,10 @@ class Program
             var plainBody = ComposePlainBodyWithFeedStatus(matched, feedStatuses);
             var htmlBody = ComposeHtmlBodyWithFeedStatus(matched, feedStatuses);
 
-            var client = new SendGridClient(Environment.GetEnvironmentVariable("SENDGRID_API_KEY"));
-            var from = new EmailAddress(Environment.GetEnvironmentVariable("EMAIL_FROM"));
-            var tos = Environment.GetEnvironmentVariable("EMAIL_TO")
-                                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                                .Select(e => new EmailAddress(e)).ToList();
+            var client = new SendGridClient(sendGridApiKey);
+            var from = new EmailAddress(emailFrom);
+            var tos = emailTo.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                             .Select(e => new EmailAddress(e)).ToList();
 
             var msg = new SendGridMessage()
             {
@@ -247,7 +247,6 @@ class Program
     static string ParseShortHttpError(string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return message;
-        // Example messages include "Response status code does not indicate success: 403 (Forbidden)."
         var m = Regex.Match(message, @"\b(\d{3})\b");
         return m.Success ? $"HTTP {m.Groups[1].Value}" : message.Length > 80 ? message.Substring(0, 80) + "..." : message;
     }
