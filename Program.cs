@@ -182,37 +182,43 @@ class Program
     }
 
     static string ComposeHtmlBody(List<(string title, string link, string summary)> jobs)
+{
+    if (jobs == null || jobs.Count == 0)
+        return "<p>No new matching jobs found in the monitored feeds.</p>";
+
+    var sb = new StringBuilder();
+    sb.Append("<html><body style='font-family:Segoe UI,Arial,sans-serif;'>");
+    sb.AppendFormat("<h2>{0} new job(s)</h2>", WebUtility.HtmlEncode(jobs.Count.ToString()));
+    sb.Append("<ul style='list-style-type:none;padding-left:0;'>");
+
+    foreach (var j in jobs)
     {
-        if (jobs == null || jobs.Count == 0)
-            return "<p>No new matching jobs found in the monitored feeds.</p>";
+        var titleHtml = WebUtility.HtmlEncode(j.title);
+        var linkHtml = string.IsNullOrWhiteSpace(j.link) ? "" : WebUtility.HtmlEncode(j.link);
+        var summaryHtml = WebUtility.HtmlEncode(j.summary);
 
-        var sb = new StringBuilder();
-        sb.Append("<html><body>");
-        sb.AppendFormat("<h2>{0} new job(s)</h2>", WebUtility.HtmlEncode(jobs.Count));
-        sb.Append("<ul>");
-        foreach (var j in jobs)
-        {
-            var titleHtml = WebUtility.HtmlEncode(j.title);
-            var linkHtml = string.IsNullOrWhiteSpace(j.link) ? "" : WebUtility.HtmlEncode(j.link);
-            var summaryHtml = WebUtility.HtmlEncode(j.summary);
+        sb.Append("<li style='margin-bottom:16px;border-bottom:1px solid #eee;padding-bottom:8px;'>");
 
-            sb.Append("<li style='margin-bottom:12px;'>");
-            if (!string.IsNullOrWhiteSpace(linkHtml))
-                sb.AppendFormat("<a href=\"{0}\" target=\"_blank\" style='font-weight:600'>{1}</a><br/>", linkHtml, titleHtml);
-            else
-                sb.AppendFormat("<span style='font-weight:600'>{0}</span><br/>", titleHtml);
+        if (!string.IsNullOrWhiteSpace(linkHtml))
+            sb.AppendFormat("<a href=\"{0}\" target=\"_blank\" style='font-weight:600;color:#0078D4;text-decoration:none'>{1}</a><br/>", linkHtml, titleHtml);
+        else
+            sb.AppendFormat("<span style='font-weight:600;color:#0078D4'>{0}</span><br/>", titleHtml);
 
-            if (!string.IsNullOrWhiteSpace(summaryHtml))
-                sb.AppendFormat("<div style='color:#333;margin-top:4px'>{0}</div>", summaryHtml);
+        if (!string.IsNullOrWhiteSpace(summaryHtml))
+            sb.AppendFormat("<div style='color:#444;margin-top:4px;font-size:14px;line-height:1.4;'>{0}</div>", summaryHtml);
 
-            sb.Append("</li>");
-        }
-        sb.Append("</ul>");
-        sb.Append("<hr/><div style='font-size:12px;color:#666'>Sent by your GitHub Actions Job Alerts service.</div>");
-        sb.Append("</body></html>");
-        return sb.ToString();
+        sb.Append("</li>");
     }
 
+    sb.Append("</ul>");
+    sb.Append("<hr style='margin-top:20px;border:none;border-top:1px solid #ddd;'/>");
+    sb.Append("<div style='font-size:12px;color:#888;margin-top:10px;'>");
+    sb.Append("Sent automatically by your <strong>GitHub Actions Job Alerts</strong> workflow.");
+    sb.Append("</div>");
+    sb.Append("</body></html>");
+
+    return sb.ToString();
+}
     static string Truncate(string text, int maxLen)
     {
         if (string.IsNullOrEmpty(text)) return "";
